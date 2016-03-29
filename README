@@ -9,5 +9,13 @@ This code will compile under g++ using the command:
 g++ *.cpp -std=c++11
 
 
-NOTE: To enable the angular momentum conservation feature, define "CORRECTION_ON". To enable the optimized version of the correction, 
-define "CORRECTION_ON" and "CORRECTION_OPTIMIZE." See defs.hpp.
+NOTES: 
+
+1) To enable the angular momentum conservation feature, define "CORRECTION_ON". To enable the optimized version of the correction, 
+   define "CORRECTION_ON" and "CORRECTION_OPTIMIZE." See defs.hpp.
+
+2) The first calculation is the direct force calculation used for comparison and may take some time. To run a quicker test, reduce
+   the number of particles (see note 3)
+
+3) To change the number of particles, change the value of "constexpr integer nparts" in defs.hpp.
+
