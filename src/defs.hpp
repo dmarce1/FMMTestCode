@@ -30,8 +30,8 @@ using real = double;
 using integer = long long;
 
 constexpr integer NDIM = 3;
-constexpr integer ncrit = 64;
-constexpr integer nparts = 1000000;
+constexpr integer ncrit = 8;
+constexpr integer nparts = 100000;
 constexpr integer nchild = 8;
 constexpr integer LP = 20;
 
