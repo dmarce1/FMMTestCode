@@ -28,8 +28,6 @@
 template<class Type>
 class multipole: public std::array<Type,MP> {
 private:
-	const Type delta[3][3] = { { Type(1.0), Type(0.0), Type(0.0) }, { Type(0.0), Type(1.0), Type(0.0) }, { Type(0.0),
-			Type(0.0), Type(1.0) } };
 	const size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
 #ifdef CORRECTION_ON
 	const size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, { { 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } },
