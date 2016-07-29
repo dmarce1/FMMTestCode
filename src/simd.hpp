@@ -14,6 +14,8 @@
 
 const std::size_t simd_len = 8;
 
+#define USE_SIMD
+
 #ifdef USE_SIMD
 #ifndef __MIC__
 #define SIMD_SIZE 2
@@ -62,7 +64,7 @@ public:
 		}
 	}
 	inline double sum() const {
-		double r = ZERO;
+		double r = 0.0;
 		for( integer i = 0; i != simd_len; ++i) {
 			r += (*this)[i];
 		}
@@ -114,7 +116,7 @@ public:
 		return *this;
 	}
 	inline simd_vector operator-() const {
-		return simd_vector(ZERO) - *this;
+		return simd_vector(0.0) - *this;
 	}
 	inline simd_vector& operator+=( const simd_vector& other) {
 		*this = *this + other;
@@ -138,7 +140,7 @@ public:
 		return other * *this;
 	}
 	inline simd_vector operator/(double d) const {
-		const simd_vector other = ONE / d;
+		const simd_vector other = 1.0 / d;
 		return *this * other;
 	}
 
@@ -147,7 +149,7 @@ public:
 		return *this;
 	}
 	inline simd_vector operator/=(double d) {
-		*this = *this * (ONE/d);
+		*this = *this * (1.0/d);
 		return *this;
 	}
 	inline double& operator[](std::size_t i) {

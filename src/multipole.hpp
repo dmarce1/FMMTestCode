@@ -24,10 +24,12 @@
 #include "defs.hpp"
 #include <array>
 
-class multipole: public std::array<real,MP> {
+
+template<class Type>
+class multipole: public std::array<Type,MP> {
 private:
-	const real delta[3][3] = { { real(1.0), real(0.0), real(0.0) }, { real(0.0), real(1.0), real(0.0) }, { real(0.0),
-			real(0.0), real(1.0) } };
+	const Type delta[3][3] = { { Type(1.0), Type(0.0), Type(0.0) }, { Type(0.0), Type(1.0), Type(0.0) }, { Type(0.0),
+			Type(0.0), Type(1.0) } };
 	const size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
 #ifdef CORRECTION_ON
 	const size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, { { 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } },
@@ -35,85 +37,98 @@ private:
 #endif
 public:
 	multipole();
-	real operator ()() const;
-	real& operator ()();
-	real operator ()(integer i, integer j) const;
-	real& operator ()(integer i, integer j);
+	Type operator ()() const;
+	Type& operator ()();
+	Type operator ()(integer i, integer j) const;
+	Type& operator ()(integer i, integer j);
 #ifdef CORRECTION_ON
-	real operator ()(integer i, integer j, integer k) const;
-	real& operator ()(integer i, integer j, integer k);
+	Type operator ()(integer i, integer j, integer k) const;
+	Type& operator ()(integer i, integer j, integer k);
 #endif
-	multipole& operator =(const multipole& expansion);
-	multipole& operator =(real expansion);
-	multipole operator>>(const space_vector& dX) const;
-	multipole& operator>>=(const space_vector& Y);
-	std::array<real, MP>& operator +=(const std::array<real, MP>& vec);
+	multipole<Type>& operator =(const multipole<Type>& expansion);
+	multipole<Type>& operator =(Type expansion);
+	multipole operator>>(const space_vector<Type>& dX) const;
+	multipole<Type>& operator>>=(const space_vector<Type>& Y);
+	std::array<Type, MP>& operator +=(const std::array<Type, MP>& vec);
 	~multipole();
 };
 
 
-inline multipole::multipole() {
+template<class Type>
+inline multipole<Type>::multipole() {
 }
 
-inline real multipole::operator ()() const {
+template<class Type>
+inline Type multipole<Type>::operator ()() const {
 	return (*this)[0];
 }
 
-inline real& multipole::operator ()() {
+template<class Type>
+inline Type& multipole<Type>::operator ()() {
 	return (*this)[0];
 }
 
-inline real multipole::operator ()(integer i, integer j) const {
+template<class Type>
+inline Type multipole<Type>::operator ()(integer i, integer j) const {
 	return (*this)[1 + map2[i][j]];
 }
 
-inline real& multipole::operator ()(integer i, integer j) {
+template<class Type>
+inline Type& multipole<Type>::operator ()(integer i, integer j) {
 	return (*this)[1 + map2[i][j]];
 }
 
 #ifdef CORRECTION_ON
-inline real multipole::operator ()(integer i, integer j, integer k) const {
+template<class Type>
+inline Type multipole<Type>::operator ()(integer i, integer j, integer k) const {
 	return (*this)[7 + map3[i][j][k]];
 }
 
-inline real& multipole::operator ()(integer i, integer j, integer k) {
+template<class Type>
+inline Type& multipole<Type>::operator ()(integer i, integer j, integer k) {
 	return (*this)[7 + map3[i][j][k]];
 }
 #endif
 
-inline multipole& multipole::operator =(const multipole& expansion) {
+template<class Type>
+inline multipole<Type>& multipole<Type>::operator =(const multipole<Type>& expansion) {
 	for (integer i = 0; i < MP; i++) {
 		(*this)[i] = expansion[i];
 	}
 	return *this;
 }
 
-inline multipole& multipole::operator =(real expansion) {
+template<class Type>
+inline multipole<Type>& multipole<Type>::operator =(Type expansion) {
 	for (integer i = 0; i < MP; i++) {
 		(*this)[i] = expansion;
 	}
 	return *this;
 }
 
-inline multipole multipole::operator>>(const space_vector& dX) const {
+template<class Type>
+inline multipole<Type> multipole<Type>::operator>>(const space_vector<Type>& dX) const {
 	multipole you = *this;
 	you >>= dX;
 	return you;
 }
 
-inline std::array<real, MP>& multipole::operator +=(const std::array<real, MP>& vec) {
+template<class Type>
+inline std::array<Type, MP>& multipole<Type>::operator +=(const std::array<Type, MP>& vec) {
 	for (integer i = 0; i < MP; i++) {
 		(*this)[i] += vec[i];
 	}
 	return *this;
 }
 
-inline multipole::~multipole() {
+template<class Type>
+inline multipole<Type>::~multipole() {
 }
 
 
-inline multipole& multipole::operator>>=(const space_vector& Y) {
-	multipole& me = *this;
+template<class Type>
+inline multipole<Type>& multipole<Type>::operator>>=(const space_vector<Type>& Y) {
+	multipole<Type>& me = *this;
 #ifdef CORRECTION_ON
 	for (integer p = 0; p < 3; p++) {
 		for (integer q = p; q < 3; q++) {

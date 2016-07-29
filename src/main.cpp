@@ -1,26 +1,24 @@
-
-
 /*  
-    Copyright (c) 2016 Dominic C. Marcello
+ Copyright (c) 2016 Dominic C. Marcello
 
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include "defs.hpp"
 #include "multipole.hpp"
 #include "expansion.hpp"
+#include "simd.hpp"
 
 #include <cassert>
 #include <memory>
@@ -36,11 +34,11 @@ bool analytic_computed = false;
 static std::multiset<real> top10;
 
 struct particle {
-	space_vector X;
+	space_vector<real> X;
 	real M;
-	space_vector g;
+	space_vector<real> g;
 	real phi;
-	space_vector g_analytic;
+	space_vector<real> g_analytic;
 	real phi_analytic;
 	bool operator<(const particle& other) {
 		if (X[0] < other.X[0]) {
@@ -60,12 +58,12 @@ struct particle {
 };
 
 class cell {
-	space_vector Xcom;
-	space_vector Xmax;
-	space_vector Xmin;
+	space_vector<real> Xcom;
+	space_vector<real> Xmax;
+	space_vector<real> Xmin;
 	real Rmax;
-	expansion Lphi;
-	multipole M;
+	expansion<real> Lphi;
+	multipole<real> M;
 	integer level;
 	bool is_leaf;
 	std::list<particle> particles;
@@ -94,8 +92,8 @@ public:
 		return false;
 	}
 
-	space_vector force_sum(bool norm) const {
-		space_vector sum;
+	space_vector<real> force_sum(bool norm) const {
+		space_vector < real > sum;
 		for (integer d = 0; d != NDIM; ++d) {
 			sum[d] = 0.0;
 		}
@@ -120,17 +118,20 @@ public:
 		return sum;
 	}
 
-	space_vector torque_sum(const bool norm) const {
-		space_vector sum;
+	space_vector<real> torque_sum(const bool norm) const {
+		space_vector < real > sum;
 		for (integer d = 0; d != NDIM; ++d) {
 			sum[d] = 0.0;
 		}
 		auto f = [=](real a) {return norm ? std::abs(a) : a;};
 		if (is_leaf) {
 			for (auto l = particles.begin(); l != particles.end(); ++l) {
-				sum[0] += f(+l->X[1] * l->g[2] * l->M - l->X[2] * l->g[1] * l->M);
-				sum[1] += f(-l->X[0] * l->g[2] * l->M + l->X[2] * l->g[0] * l->M);
-				sum[2] += f(+l->X[0] * l->g[1] * l->M - l->X[1] * l->g[0] * l->M);
+				sum[0] += f(
+						+l->X[1] * l->g[2] * l->M - l->X[2] * l->g[1] * l->M);
+				sum[1] += f(
+						-l->X[0] * l->g[2] * l->M + l->X[2] * l->g[0] * l->M);
+				sum[2] += f(
+						+l->X[0] * l->g[1] * l->M - l->X[1] * l->g[0] * l->M);
 			}
 		} else {
 			for (integer c = 0; c != nchild; ++c) {
@@ -167,8 +168,9 @@ public:
 		return bool(Z > (Rmax + other.Rmax) / theta);
 	}
 
-	void compute_expansions(const expansion& Lphi0, const space_vector& X0) {
-		space_vector dX;
+	void compute_expansions(const expansion<real>& Lphi0,
+			const space_vector<real>& X0) {
+		space_vector < real > dX;
 		for (integer i = 0; i != NDIM; ++i) {
 			dX[i] = Xcom[i] - X0[i];
 		}
@@ -204,12 +206,46 @@ public:
 		}
 	}
 
+#define USE_VECTOR
+
 	void compute_interactions(std::list<std::shared_ptr<cell>> cells) {
+		std::list < std::shared_ptr < cell >> child_cells;
+
 		auto l = cells.begin();
-		std::list<std::shared_ptr<cell>> child_cells;
+
+#ifdef USE_VECTOR
+		multipole<simd_vector> Mvec;
+		space_vector<simd_vector> Rvec;
+
+		int index = 0;
+#endif
+
+		l = cells.begin();
 		while (l != cells.end()) {
 			if (this->is_well_separated_from(**l)) {
-				M2L(std::move(*l));
+#ifdef USE_VECTOR
+				if ((*l)->M() != 0.0 && M() != 0.0) {
+					for (integer d = 0; d != MP; ++d) {
+						Mvec[d][index] = ((*l)->M)[d];
+					}
+					for (integer d = 0; d != NDIM; ++d) {
+						Rvec[d][index] = Xcom[d] - (*l)->Xcom[d];
+					}
+					++index;
+					if (index == simd_len) {
+						expansion<simd_vector> Lvec;
+						for (integer l = 0; l != LP; ++l) {
+							Lvec[l] = 0.0;
+						}
+						multipole_interaction(Lvec, M, Mvec, Rvec);
+						for (integer l = 0; l != LP; ++l) {
+							Lphi[l] += Lvec[l].sum();
+						}
+						index = 0;
+					}
+				}
+#endif
+//				M2L(std::move(*l));
 			} else {
 				if ((*l)->is_leaf) {
 					if (this->is_leaf) {
@@ -230,6 +266,27 @@ public:
 			}
 			l = cells.erase(l);
 		}
+#ifdef USE_VECTOR
+		if (index > 0) {
+			for( ; index < simd_len; ++index) {
+				Rvec[0][index] = 1.0;
+				Rvec[1][index] = 1.0;
+				Rvec[2][index] = 1.0;
+				for (integer l = 0; l != MP; ++l) {
+					Mvec[l][index] = 0.0;
+				}
+			}
+			expansion<simd_vector> Lvec;
+			for (integer l = 0; l != LP; ++l) {
+				Lvec[l] = 0.0;
+			}
+			multipole_interaction(Lvec, M, Mvec, Rvec);
+			for (integer l = 0; l != LP; ++l) {
+				Lphi[l] += Lvec[l].sum();
+			}
+		}
+#endif
+
 		if (is_leaf) {
 			if (!child_cells.empty()) {
 				this->compute_interactions(std::move(child_cells));
@@ -244,14 +301,11 @@ public:
 
 	void M2L(const std::shared_ptr<cell> other) {
 		if (other->M() != 0.0 && M() != 0.0) {
-			if ((*this) < *other) {
-				return;
-			}
-			space_vector dX;
+			space_vector < real > dX;
 			for (integer d = 0; d != NDIM; ++d) {
 				dX[d] = Xcom[d] - other->Xcom[d];
 			}
-			multipole_interaction(Lphi, other->Lphi, M, other->M, dX);
+			multipole_interaction(Lphi, M, other->M, dX);
 		}
 	}
 
@@ -259,11 +313,12 @@ public:
 		if (!(*this < *other)) {
 			return;
 		}
-		expansion D;
-		space_vector dX;
+		expansion<real> D;
+		space_vector < real > dX;
 		real r2, r3inv, rinv;
 		for (auto n = particles.begin(); n != particles.end(); ++n) {
-			for (auto m = other->particles.begin(); m != other->particles.end(); ++m) {
+			for (auto m = other->particles.begin(); m != other->particles.end();
+					++m) {
 				r2 = 0.0;
 				for (integer d = 0; d != NDIM; ++d) {
 					dX[d] = n->X[d] - m->X[d];
@@ -282,8 +337,8 @@ public:
 	}
 
 	void P2Pself(const std::shared_ptr<cell> other) {
-		expansion D;
-		space_vector dX;
+		expansion<real> D;
+		space_vector < real > dX;
 		real r2, r3inv, rinv;
 		for (auto n = particles.begin(); n != particles.end(); ++n) {
 			auto m = n;
@@ -346,7 +401,8 @@ public:
 		rmax_ben = 0.0;
 		rmax_sal = 0.0;
 		for (integer d = 0; d != NDIM; ++d) {
-			rmax_sal += std::pow(std::max(Xmax[d] - Xcom[d], Xcom[d] - Xmin[d]), real(2));
+			rmax_sal += std::pow(std::max(Xmax[d] - Xcom[d], Xcom[d] - Xmin[d]),
+					real(2));
 		}
 		rmax_sal = std::sqrt(rmax_sal);
 		assert(rmax_sal > 0.0);
@@ -355,10 +411,10 @@ public:
 		if (is_leaf) {
 			rmax_ben = 0.0;
 			for (auto l = particles.begin(); l != particles.end(); ++l) {
-				multipole this_M;
+				multipole<real> this_M;
 				this_M = 0.0;
 				this_M() = l->M;
-				space_vector dX;
+				space_vector < real > dX;
 				for (integer i = 0; i != NDIM; ++i) {
 					dX[i] = l->X[i] - Xcom[i];
 				}
@@ -374,7 +430,7 @@ public:
 		} else {
 			for (integer l = 0; l != nchild; ++l) {
 				auto& c = children[l];
-				space_vector dX;
+				space_vector < real > dX;
 				for (integer d = 0; d != NDIM; ++d) {
 					dX[d] = c->Xcom[d] - Xcom[d];
 				}
@@ -393,7 +449,8 @@ public:
 		Rmax = std::min(rmax_sal, rmax_ben);
 	}
 
-	void direct_interaction_at(const space_vector& X, real& phi, space_vector& g) const {
+	void direct_interaction_at(const space_vector<real>& X, real& phi,
+			space_vector<real>& g) const {
 		if (level == 0) {
 			for (integer d = 0; d != NDIM; ++d) {
 				g[d] = 0.0;
@@ -402,7 +459,7 @@ public:
 		}
 		if (is_leaf) {
 			real r2, rinv, r3inv;
-			space_vector dX;
+			space_vector < real > dX;
 			for (auto m = particles.begin(); m != particles.end(); ++m) {
 				r2 = 0.0;
 				for (integer d = 0; d != NDIM; ++d) {
@@ -446,12 +503,17 @@ public:
 			for (std::size_t i = 0; i != parts.size(); i++) {
 				auto l = parts[i];
 				if (!analytic_computed) {
-					root.direct_interaction_at(l->X, l->phi_analytic, l->g_analytic);
+					root.direct_interaction_at(l->X, l->phi_analytic,
+							l->g_analytic);
 				}
-				space_vector& g = l->g_analytic;
-				const real abs_g_exact = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
-				const real abs_g_approx = std::sqrt(l->g[0] * l->g[0] + l->g[1] * l->g[1] + l->g[2] * l->g[2]);
-				const real eps = std::abs(abs_g_approx - abs_g_exact) / abs_g_exact;
+				space_vector < real > &g = l->g_analytic;
+				const real abs_g_exact = std::sqrt(
+						g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+				const real abs_g_approx = std::sqrt(
+						l->g[0] * l->g[0] + l->g[1] * l->g[1]
+								+ l->g[2] * l->g[2]);
+				const real eps = std::abs(abs_g_approx - abs_g_exact)
+						/ abs_g_exact;
 #pragma omp critical
 				{
 					if (top10.size() < nparts / 100) {
@@ -481,11 +543,12 @@ public:
 		}
 		if (counter < ncells) {
 			printf("%.2f\r", 100.0 * counter / real(ncells));
-			fflush(stdout);
+			fflush (stdout);
 			++counter;
 			if (counter == ncells) {
 				analytic_computed = true;
-				printf("100.00\n took %e seconds\n", real(clock()) / CLOCKS_PER_SEC - start_time);
+				printf("100.00\n took %e seconds\n",
+						real(clock()) / CLOCKS_PER_SEC - start_time);
 				++counter;
 				sleep(2);
 			}
@@ -495,9 +558,10 @@ public:
 
 	void initialize() {
 		std::list<particle> these_parts;
-		auto randx = []() {
-			return (real(rand())+real(0.5)) / (real(RAND_MAX) + real(1.0));
-		};
+		auto randx =
+				[]() {
+					return (real(rand())+real(0.5)) / (real(RAND_MAX) + real(1.0));
+				};
 		const integer ngalaxies = 5;
 		Xmax[0] = Xmax[1] = Xmax[2] = 0.0;
 		Xmin[0] = Xmin[1] = Xmin[2] = 0.0;
@@ -543,15 +607,18 @@ public:
 		//	printf("Created a tree with maximum level %i\n", int(maxlev));
 	}
 
-	integer create_tree(const space_vector& xmin, const space_vector& xmax, std::list<particle> parts, integer lev) {
+	integer create_tree(const space_vector<real>& xmin,
+			const space_vector<real>& xmax, std::list<particle> parts,
+			integer lev) {
 		integer maxlev = lev;
 		level = lev;
 		Xmax = xmax;
 		is_leaf = true;
 		Xmin = xmin;
-		space_vector this_xmax, this_xmin;
+		space_vector<real> this_xmax, this_xmin;
 		std::list<particle> these_parts;
-		std::array<std::array<std::array<std::list<particle>, 2>, 2>, 2> child_parts;
+		std::array < std::array<std::array<std::list<particle>, 2>, 2>, 2
+				> child_parts;
 		particles = std::move(parts);
 		if (particles.size() > ncrit) {
 			is_leaf = false;
@@ -561,11 +628,20 @@ public:
 			auto l = particles.begin();
 			while (l != particles.end()) {
 				const auto i = std::max(integer(0),
-						std::min(integer(1), integer(real(2) * (l->X[0] - Xmin[0]) / (Xmax[0] - Xmin[0]))));
+						std::min(integer(1),
+								integer(
+										real(2) * (l->X[0] - Xmin[0])
+												/ (Xmax[0] - Xmin[0]))));
 				const auto j = std::max(integer(0),
-						std::min(integer(1), integer(real(2) * (l->X[1] - Xmin[1]) / (Xmax[1] - Xmin[1]))));
+						std::min(integer(1),
+								integer(
+										real(2) * (l->X[1] - Xmin[1])
+												/ (Xmax[1] - Xmin[1]))));
 				const auto k = std::max(integer(0),
-						std::min(integer(1), integer(real(2) * (l->X[2] - Xmin[2]) / (Xmax[2] - Xmin[2]))));
+						std::min(integer(1),
+								integer(
+										real(2) * (l->X[2] - Xmin[2])
+												/ (Xmax[2] - Xmin[2]))));
 				child_parts[i][j][k].push_back(std::move(*l));
 				l = particles.erase(l);
 			}
@@ -573,14 +649,18 @@ public:
 				this_xmin[0] = Xmin[0] + 0.5 * real(i) * (Xmax[0] - Xmin[0]);
 				this_xmax[0] = this_xmin[0] + 0.5 * (Xmax[0] - Xmin[0]);
 				for (integer j = 0; j < 2; ++j) {
-					this_xmin[1] = Xmin[1] + 0.5 * real(j) * (Xmax[1] - Xmin[1]);
+					this_xmin[1] = Xmin[1]
+							+ 0.5 * real(j) * (Xmax[1] - Xmin[1]);
 					this_xmax[1] = this_xmin[1] + 0.5 * (Xmax[1] - Xmin[1]);
 					for (integer k = 0; k < 2; ++k) {
-						this_xmin[2] = Xmin[2] + 0.5 * real(k) * (Xmax[2] - Xmin[2]);
+						this_xmin[2] = Xmin[2]
+								+ 0.5 * real(k) * (Xmax[2] - Xmin[2]);
 						this_xmax[2] = this_xmin[2] + 0.5 * (Xmax[2] - Xmin[2]);
 						maxlev = std::max(
-								children[i * 4 + j * 2 + k]->create_tree(this_xmin, this_xmax,
-										std::move(child_parts[i][j][k]), lev + 1), maxlev);
+								children[i * 4 + j * 2 + k]->create_tree(
+										this_xmin, this_xmax,
+										std::move(child_parts[i][j][k]),
+										lev + 1), maxlev);
 					}
 				}
 			}
@@ -593,7 +673,7 @@ public:
 	real solve() {
 		real t00 = clock();
 		compute_multipoles();
-		std::list<std::shared_ptr<cell>> cells;
+		std::list < std::shared_ptr < cell >> cells;
 		for (integer i = 0; i != nchild; ++i) {
 			cells.push_back(children[i]);
 		}
@@ -614,18 +694,20 @@ public:
 };
 
 int main() {
-	printf("%16s %16s %16s %16s %16s %16s %16s\n", "theta", "nparts", "solve_time", "err", "err99", "gsum", "tsum");
+	printf("%16s %16s %16s %16s %16s %16s %16s\n", "theta", "nparts",
+			"solve_time", "err", "err99", "gsum", "tsum");
 	cell root;
 	root.initialize();
 	root.output("output.txt");
 	for (theta = 1.0; theta > 0.15; theta -= 0.1) {
-		space_vector g_err;
+		space_vector < real > g_err;
 		for (integer d = 0; d != NDIM; ++d) {
 			g_err[d] = 0.0;
 		}
 		real solve_time = root.solve();
 		//	srand(1);
 		const real this_err = root.compute_error(root);
+	//	const real this_err = 0.0;
 		auto g = root.force_sum(false);
 		auto gnorm = root.force_sum(true);
 		auto t = root.torque_sum(false);
@@ -648,10 +730,11 @@ int main() {
 		//	printf("Force  sum = %e \n", gsum);
 		//	printf("Torque sum = %e \n", tsum);
 		FILE* fp = fopen("data.dat", "at");
-		printf("%16e %16lli %16e %16e %16e %16e %16e\n", theta, nparts, solve_time, this_err, err99, gsum, tsum);
-		fprintf(fp, "%e %lli %e %e %e %e %e\n", theta, nparts, solve_time, this_err, err99, gsum, tsum);
+		printf("%16e %16lli %16e %16e %16e %16e %16e\n", theta, nparts,
+				solve_time, this_err, err99, gsum, tsum);
+		fprintf(fp, "%e %lli %e %e %e %e %e\n", theta, nparts, solve_time,
+				this_err, err99, gsum, tsum);
 		fclose(fp);
-		//	break;
 	}
 	return 0;
 }
