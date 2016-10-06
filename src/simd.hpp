@@ -14,7 +14,12 @@
 
 const std::size_t simd_len = 8;
 
+#ifdef __AVX__
+#pragma message( "Compiling with SIMD\n" )
 #define USE_SIMD
+#else
+#pragma message( "Compiling without SIMD\n" )
+#endif
 
 #ifdef USE_SIMD
 #ifndef __MIC__
