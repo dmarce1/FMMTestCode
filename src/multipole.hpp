@@ -28,11 +28,6 @@
 template<class Type>
 class multipole: public std::array<Type,MP> {
 private:
-	const size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
-#ifdef CORRECTION_ON
-	const size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, { { 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } },
-			{ { 2, 4, 5 }, { 4, 7, 8 }, { 5, 8, 9 } } };
-#endif
 public:
 	multipole();
 	Type operator ()() const;
@@ -68,22 +63,28 @@ inline Type& multipole<Type>::operator ()() {
 
 template<class Type>
 inline Type multipole<Type>::operator ()(integer i, integer j) const {
+	static constexpr size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
 	return (*this)[1 + map2[i][j]];
 }
 
 template<class Type>
 inline Type& multipole<Type>::operator ()(integer i, integer j) {
+	static constexpr size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
 	return (*this)[1 + map2[i][j]];
 }
 
 #ifdef CORRECTION_ON
 template<class Type>
 inline Type multipole<Type>::operator ()(integer i, integer j, integer k) const {
+	static constexpr size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, { { 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } },
+			{ { 2, 4, 5 }, { 4, 7, 8 }, { 5, 8, 9 } } };
 	return (*this)[7 + map3[i][j][k]];
 }
 
 template<class Type>
 inline Type& multipole<Type>::operator ()(integer i, integer j, integer k) {
+	static constexpr size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, { { 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } },
+			{ { 2, 4, 5 }, { 4, 7, 8 }, { 5, 8, 9 } } };
 	return (*this)[7 + map3[i][j][k]];
 }
 #endif

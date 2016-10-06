@@ -35,10 +35,10 @@ static std::multiset<real> top10;
 
 struct particle {
 	space_vector<real> X;
-	real M;
 	space_vector<real> g;
-	real phi;
 	space_vector<real> g_analytic;
+	real M;
+	real phi;
 	real phi_analytic;
 	bool operator<(const particle& other) {
 		if (X[0] < other.X[0]) {
@@ -66,8 +66,8 @@ class cell {
 	multipole<real> M;
 	integer level;
 	bool is_leaf;
-	std::list<particle> particles;
-	std::shared_ptr<cell> children[nchild];
+	std::vector<particle> particles;
+	cell* children[nchild];
 
 public:
 
@@ -75,6 +75,11 @@ public:
 		ncells++;
 	}
 	~cell() {
+		if (!is_leaf) {
+			for (integer i = 0; i != nchild; ++i) {
+				delete children[i];
+			}
+		}
 		--ncells;
 	}
 	bool operator<(const cell& other) {
@@ -193,37 +198,20 @@ public:
 		}
 	}
 
-	bool get_leaf_directory(std::list<std::shared_ptr<cell>>& dir) {
-		if (is_leaf) {
-			return true;
-		} else {
-			for (integer i = 0; i != nchild; ++i) {
-				if (children[i]->get_leaf_directory(dir)) {
-					dir.push_back(children[i]);
-				}
-			}
-			return false;
-		}
-	}
+	void compute_interactions(std::vector<cell*> cells) {
+		static std::vector<std::vector<cell*>> __child_cells(100);
 
-#define USE_VECTOR
-
-	void compute_interactions(std::list<std::shared_ptr<cell>> cells) {
-		std::list < std::shared_ptr < cell >> child_cells;
-
+		std::vector<cell*>& child_cells = __child_cells[level];
+		child_cells.resize(0);
 		auto l = cells.begin();
 
-#ifdef USE_VECTOR
 		multipole<simd_vector> Mvec;
 		space_vector<simd_vector> Rvec;
 
 		int index = 0;
-#endif
 
-		l = cells.begin();
-		while (l != cells.end()) {
+		for (auto l = cells.begin(); l != cells.end(); ++l) {
 			if (this->is_well_separated_from(**l)) {
-#ifdef USE_VECTOR
 				if ((*l)->M() != 0.0 && M() != 0.0) {
 					for (integer d = 0; d != MP; ++d) {
 						Mvec[d][index] = ((*l)->M)[d];
@@ -244,12 +232,10 @@ public:
 						index = 0;
 					}
 				}
-#endif
-//				M2L(std::move(*l));
 			} else {
 				if ((*l)->is_leaf) {
 					if (this->is_leaf) {
-						if (this != (l)->get()) {
+						if (this != *l) {
 							P2P(std::move(*l));
 						} else {
 							P2Pself(std::move(*l));
@@ -264,11 +250,9 @@ public:
 					}
 				}
 			}
-			l = cells.erase(l);
 		}
-#ifdef USE_VECTOR
 		if (index > 0) {
-			for( ; index < simd_len; ++index) {
+			for (; index < simd_len; ++index) {
 				Rvec[0][index] = 1.0;
 				Rvec[1][index] = 1.0;
 				Rvec[2][index] = 1.0;
@@ -285,7 +269,6 @@ public:
 				Lphi[l] += Lvec[l].sum();
 			}
 		}
-#endif
 
 		if (is_leaf) {
 			if (!child_cells.empty()) {
@@ -299,44 +282,69 @@ public:
 
 	}
 
-	void M2L(const std::shared_ptr<cell> other) {
-		if (other->M() != 0.0 && M() != 0.0) {
-			space_vector < real > dX;
-			for (integer d = 0; d != NDIM; ++d) {
-				dX[d] = Xcom[d] - other->Xcom[d];
-			}
-			multipole_interaction(Lphi, M, other->M, dX);
-		}
-	}
-
-	void P2P(const std::shared_ptr<cell> other) {
+	void P2P(cell* other) {
 		if (!(*this < *other)) {
 			return;
 		}
-		expansion<real> D;
-		space_vector < real > dX;
-		real r2, r3inv, rinv;
+
 		for (auto n = particles.begin(); n != particles.end(); ++n) {
-			for (auto m = other->particles.begin(); m != other->particles.end();
-					++m) {
-				r2 = 0.0;
-				for (integer d = 0; d != NDIM; ++d) {
-					dX[d] = n->X[d] - m->X[d];
-					r2 += dX[d] * dX[d];
+			int i = 0;
+			simd_vector mX;
+			simd_vector mY;
+			simd_vector mZ;
+			simd_vector mM;
+			simd_vector phi, gx, gy, gz;
+			const int sz = other->particles.size();
+			while (i < sz) {
+				for (int j = 0; j < simd_len; ++j) {
+					if (i < sz) {
+						const auto& p = other->particles;
+						mX[j] = p[i].X[0];
+						mY[j] = p[i].X[1];
+						mZ[j] = p[i].X[2];
+						mM[j] = p[i].M;
+					} else {
+						mX[j] = 0.0;
+						mY[j] = 0.0;
+						mZ[j] = 0.0;
+						mM[j] = 0.0;
+					}
+					++i;
 				}
-				rinv = real(1.0) / std::sqrt(r2);
-				r3inv = rinv / r2;
-				n->phi -= m->M * rinv;
-				m->phi -= n->M * rinv;
-				for (integer d = 0; d != NDIM; ++d) {
-					n->g[d] -= dX[d] * m->M * r3inv;
-					m->g[d] += dX[d] * n->M * r3inv;
+				i -= simd_len;
+
+				const simd_vector dX = simd_vector(n->X[0]) - mX;
+				const simd_vector dY = simd_vector(n->X[1]) - mY;
+				const simd_vector dZ = simd_vector(n->X[2]) - mZ;
+				const simd_vector r2 = dX * dX + dY * dY + dZ * dZ;
+				const simd_vector rinv = simd_vector(1.) / sqrt(r2);
+				auto tmp1 = mM * rinv;
+				auto tmp2 = n->M * rinv;
+				n->phi -= tmp1.sum();
+				phi = -tmp2;
+				tmp1 /= r2;
+				tmp2 /= r2;
+				n->g[0] -= (dX * tmp1).sum();
+				n->g[1] -= (dY * tmp1).sum();
+				n->g[2] -= (dZ * tmp1).sum();
+				gx = dX * tmp2;
+				gy = dY * tmp2;
+				gz = dZ * tmp2;
+				for (int j = 0; j < simd_len && i < sz; ++j) {
+					auto& p = other->particles;
+					if (i < sz) {
+						p[i].phi += phi[j];
+						p[i].g[0] += gx[j];
+						p[i].g[1] += gy[j];
+						p[i].g[2] += gz[j];
+					}
+					++i;
 				}
 			}
 		}
 	}
 
-	void P2Pself(const std::shared_ptr<cell> other) {
+	void P2Pself(const cell* other) {
 		expansion<real> D;
 		space_vector < real > dX;
 		real r2, r3inv, rinv;
@@ -444,8 +452,6 @@ public:
 			}
 		}
 		assert(rmax_ben >= 0.0);
-//		Rmax = rmax_sal;
-//		Rmax = rmax_ben;
 		Rmax = std::min(rmax_sal, rmax_ben);
 	}
 
@@ -499,13 +505,18 @@ public:
 				parts[i] = &(*iter);
 				++iter;
 			}
-#pragma omp parallel for reduction (+:err)
-			for (std::size_t i = 0; i != parts.size(); i++) {
-				auto l = parts[i];
-				if (!analytic_computed) {
+			if (!analytic_computed) {
+				const std::size_t psize = parts.size();
+#pragma omp parallel for
+				for (std::size_t i = 0; i < psize; i++) {
+					auto l = parts[i];
 					root.direct_interaction_at(l->X, l->phi_analytic,
 							l->g_analytic);
 				}
+			}
+
+			for (std::size_t i = 0; i != parts.size(); i++) {
+				auto l = parts[i];
 				space_vector < real > &g = l->g_analytic;
 				const real abs_g_exact = std::sqrt(
 						g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
@@ -514,7 +525,6 @@ public:
 								+ l->g[2] * l->g[2]);
 				const real eps = std::abs(abs_g_approx - abs_g_exact)
 						/ abs_g_exact;
-#pragma omp critical
 				{
 					if (top10.size() < nparts / 100) {
 						top10.insert(eps);
@@ -539,7 +549,7 @@ public:
 
 		if (counter == 0) {
 			printf("Starting direct calculation\n");
-			start_time = real(clock()) / CLOCKS_PER_SEC;
+			start_time = real(clock()) / real(CLOCKS_PER_SEC);
 		}
 		if (counter < ncells) {
 			printf("%.2f\r", 100.0 * counter / real(ncells));
@@ -548,7 +558,7 @@ public:
 			if (counter == ncells) {
 				analytic_computed = true;
 				printf("100.00\n took %e seconds\n",
-						real(clock()) / CLOCKS_PER_SEC - start_time);
+						real(clock()) / real(CLOCKS_PER_SEC - start_time));
 				++counter;
 				sleep(2);
 			}
@@ -568,22 +578,22 @@ public:
 		for (integer gi = 0; gi != ngalaxies; ++gi) {
 			const real this_m = randx();
 			const real a = randx();
-			const real x0 = 1000.0 * (2.0 * randx() - 1.0);
-			const real y0 = 1000.0 * (2.0 * randx() - 1.0);
-			const real z0 = 1000.0 * (2.0 * randx() - 1.0);
+			const real x0 = real(1000.0) * (real(2.0) * randx() - real(1.0));
+			const real y0 = real(1000.0) * (real(2.0) * randx() - real(1.0));
+			const real z0 = real(1000.0) * (real(2.0) * randx() - real(1.0));
 			for (integer i = 0; i != nparts / ngalaxies; ++i) {
 				particle p;
 				real x, y, z;
 				real r0, p0;
 				do {
 					p0 = randx();
-					r0 = (a / (1.0 - p0)) * (p0 + std::sqrt(p0));
-				} while (r0 > 1000.0 * a);
+					r0 = (a / (real(1.0) - p0)) * (p0 + std::sqrt(p0));
+				} while (r0 > real(1000.0) * a);
 				real r;
 				do {
-					x = r0 * (2.0 * randx() - 1.0);
-					y = r0 * (2.0 * randx() - 1.0);
-					z = r0 * (2.0 * randx() - 1.0);
+					x = r0 * (real(2.0) * randx() - real(1.0));
+					y = r0 * (real(2.0) * randx() - real(1.0));
+					z = r0 * (real(2.0) * randx() - real(1.0));
 					r = std::sqrt(x * x + y * y + z * z);
 				} while (r > r0);
 				x += x0;
@@ -619,14 +629,14 @@ public:
 		std::list<particle> these_parts;
 		std::array < std::array<std::array<std::list<particle>, 2>, 2>, 2
 				> child_parts;
-		particles = std::move(parts);
-		if (particles.size() > ncrit) {
+		auto tmp = std::move(parts);
+		if (tmp.size() > ncrit) {
 			is_leaf = false;
 			for (integer i = 0; i < nchild; ++i) {
-				children[i] = std::make_shared<cell>();
+				children[i] = new cell();
 			}
-			auto l = particles.begin();
-			while (l != particles.end()) {
+			auto l = tmp.begin();
+			while (l != tmp.end()) {
 				const auto i = std::max(integer(0),
 						std::min(integer(1),
 								integer(
@@ -643,19 +653,22 @@ public:
 										real(2) * (l->X[2] - Xmin[2])
 												/ (Xmax[2] - Xmin[2]))));
 				child_parts[i][j][k].push_back(std::move(*l));
-				l = particles.erase(l);
+				l = tmp.erase(l);
 			}
 			for (integer i = 0; i < 2; ++i) {
-				this_xmin[0] = Xmin[0] + 0.5 * real(i) * (Xmax[0] - Xmin[0]);
-				this_xmax[0] = this_xmin[0] + 0.5 * (Xmax[0] - Xmin[0]);
+				this_xmin[0] = Xmin[0]
+						+ real(0.5) * real(i) * (Xmax[0] - Xmin[0]);
+				this_xmax[0] = this_xmin[0] + real(0.5) * (Xmax[0] - Xmin[0]);
 				for (integer j = 0; j < 2; ++j) {
 					this_xmin[1] = Xmin[1]
-							+ 0.5 * real(j) * (Xmax[1] - Xmin[1]);
-					this_xmax[1] = this_xmin[1] + 0.5 * (Xmax[1] - Xmin[1]);
+							+ real(0.5) * real(j) * (Xmax[1] - Xmin[1]);
+					this_xmax[1] = this_xmin[1]
+							+ real(0.5) * (Xmax[1] - Xmin[1]);
 					for (integer k = 0; k < 2; ++k) {
 						this_xmin[2] = Xmin[2]
-								+ 0.5 * real(k) * (Xmax[2] - Xmin[2]);
-						this_xmax[2] = this_xmin[2] + 0.5 * (Xmax[2] - Xmin[2]);
+								+ real(0.5) * real(k) * (Xmax[2] - Xmin[2]);
+						this_xmax[2] = this_xmin[2]
+								+ real(0.5) * (Xmax[2] - Xmin[2]);
 						maxlev = std::max(
 								children[i * 4 + j * 2 + k]->create_tree(
 										this_xmin, this_xmax,
@@ -666,14 +679,14 @@ public:
 			}
 		}
 		//	printf( "%i\n", maxlev);
-
+		particles = std::vector < particle > (tmp.begin(), tmp.end());
 		return maxlev;
 	}
 
 	real solve() {
 		real t00 = clock();
 		compute_multipoles();
-		std::list < std::shared_ptr < cell >> cells;
+		std::vector < cell*> cells;
 		for (integer i = 0; i != nchild; ++i) {
 			cells.push_back(children[i]);
 		}
@@ -707,7 +720,7 @@ int main() {
 		real solve_time = root.solve();
 		//	srand(1);
 		const real this_err = root.compute_error(root);
-	//	const real this_err = 0.0;
+		//const real this_err = 0.0;
 		auto g = root.force_sum(false);
 		auto gnorm = root.force_sum(true);
 		auto t = root.torque_sum(false);

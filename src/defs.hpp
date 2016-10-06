@@ -23,14 +23,15 @@
 
 #include <array>
 
-#define CORRECTION_ON
-#define CORRECTION_OPTIMIZE
+//#define CORRECTION_ON
+//#define CORRECTION_OPTIMIZE
 
-using real = double;
 using integer = long long;
 
+#include "real.hpp"
+
 constexpr integer NDIM = 3;
-constexpr integer ncrit = 8;
+constexpr integer ncrit = 16;
 constexpr integer nparts = 100000;
 constexpr integer nchild = 8;
 constexpr integer LP = 20;

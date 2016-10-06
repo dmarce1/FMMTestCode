@@ -24,11 +24,7 @@
 
 template<class Type>
 class expansion: public std::array<Type, LP> {
-private:
-	const size_t map2[3][3] = { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } };
-	const size_t map3[3][3][3] = { { { 0, 1, 2 }, { 1, 3, 4 }, { 2, 4, 5 } }, {
-			{ 1, 3, 4 }, { 3, 6, 7 }, { 4, 7, 8 } }, { { 2, 4, 5 }, { 4, 7, 8 },
-			{ 5, 8, 9 } } };
+
 public:
 	expansion<Type>& operator*=(Type r) {
 		for (integer i = 0; i != LP; ++i) {
@@ -84,19 +80,31 @@ inline Type& expansion<Type>::operator ()(int i) {
 
 template<class Type>
 inline Type expansion<Type>::operator ()(int i, int j) const {
+	static constexpr size_t
+	map2[3][3] = { {0, 1, 2}, {1, 3, 4}, {2, 4, 5}};
 	return (*this)[4 + map2[i][j]];
 }
 template<class Type>
 inline Type& expansion<Type>::operator ()(int i, int j) {
+	static constexpr size_t
+	map2[3][3] = { {0, 1, 2}, {1, 3, 4}, {2, 4, 5}};
 	return (*this)[4 + map2[i][j]];
 }
 
 template<class Type>
 inline Type expansion<Type>::operator ()(int i, int j, int k) const {
+	static constexpr size_t
+	map3[3][3][3] = { { {0, 1, 2}, {1, 3, 4}, {2, 4, 5}}, { {1, 3, 4}, {3, 6, 7}, {4, 7, 8}},
+		{	{	2, 4, 5}, {4, 7, 8}, {5, 8, 9}}};
+
 	return (*this)[10 + map3[i][j][k]];
 }
 template<class Type>
 inline Type& expansion<Type>::operator ()(int i, int j, int k) {
+	static constexpr size_t
+	map3[3][3][3] = { { {0, 1, 2}, {1, 3, 4}, {2, 4, 5}}, { {1, 3, 4}, {3, 6, 7}, {4, 7, 8}},
+		{	{	2, 4, 5}, {4, 7, 8}, {5, 8, 9}}};
+
 	return (*this)[10 + map3[i][j][k]];
 }
 
@@ -134,7 +142,7 @@ inline expansion<Type>& expansion<Type>::operator<<=(
 	}
 	for (integer a = 0; a < 3; a++) {
 		for (integer b = 0; b < 3; b++) {
-			me() += me(a, b) * dX[a] * dX[b] * 0.5;
+			me() += me(a, b) * dX[a] * dX[b] * real(0.5);
 		}
 	}
 	for (integer a = 0; a < 3; a++) {
@@ -152,7 +160,7 @@ inline expansion<Type>& expansion<Type>::operator<<=(
 	for (integer a = 0; a < 3; a++) {
 		for (integer b = 0; b < 3; b++) {
 			for (integer c = 0; c < 3; c++) {
-				me(a) += me(a, b, c) * dX[b] * dX[c] * 0.5;
+				me(a) += me(a, b, c) * dX[b] * dX[c] * real(0.5);
 			}
 		}
 	}
@@ -176,7 +184,7 @@ inline Type expansion<Type>::translate_to_particle(
 	}
 	for (integer a = 0; a < 3; a++) {
 		for (integer b = 0; b < 3; b++) {
-			this_phi += L(a, b) * dX[a] * dX[b] * 0.5;
+			this_phi += L(a, b) * dX[a] * dX[b] * real(0.5);
 		}
 	}
 	for (integer a = 0; a < 3; a++) {
@@ -227,6 +235,23 @@ inline void expansion<Type>::invert() {
 
 template<class Type>
 inline expansion<Type>::~expansion() {
+}
+
+static expansion<real> factor;
+
+__attribute((constructor))
+static void init_factors() {
+	factor = 0.0;
+	factor() += 1.0;
+	for (integer a = 0; a < NDIM; ++a) {
+		factor(a) += 1.0;
+		for (integer b = 0; b < NDIM; ++b) {
+			factor(a, b) += 1.0;
+			for (integer c = 0; c < NDIM; ++c) {
+				factor(a, b, c) += 1.0;
+			}
+		}
+	}
 }
 
 template<class Type, class Type2>
@@ -309,8 +334,8 @@ inline void multipole_interaction(expansion<Type2>& L1,
 
 	L1() += M2() * D();
 	for (integer a = 0; a < 3; a++) {
-		for (integer b = 0; b < 3; b++) {
-			L1() += M2(a, b) * D(a, b) * 0.5;
+		for (integer b = a; b < 3; b++) {
+			L1() += M2(a, b) * D(a, b) * real(0.5) * factor(a, b);
 		}
 	}
 
@@ -319,8 +344,8 @@ inline void multipole_interaction(expansion<Type2>& L1,
 	}
 	for (integer a = 0; a < 3; a++) {
 		for (integer b = 0; b < 3; b++) {
-			for (integer c = 0; c < 3; c++) {
-				L1(a) += M2(c, b) * D(a, b, c) * 0.5;
+			for (integer c = b; c < 3; c++) {
+				L1(a) += M2(c, b) * D(a, b, c) * real(0.5) * factor(c, b);
 			}
 		}
 	}
@@ -342,11 +367,11 @@ inline void multipole_interaction(expansion<Type2>& L1,
 #ifdef CORRECTION_ON
 	for (integer i = 0; i != NDIM; ++i) {
 		for (integer j = 0; j != NDIM; ++j) {
-			for (integer k = 0; k != NDIM; ++k) {
-				for (integer l = 0; l != NDIM; ++l) {
+			for (integer k = j; k != NDIM; ++k) {
+				for (integer l = k; l != NDIM; ++l) {
 					L1(i) -= D4[i](j, k, l)
 							* (M2(j, k, l) - M1(j, k, l) * M2() / M1())
-							* (Type(1) / Type(6));
+							* (Type(1) / Type(6)) * factor(j, k, l);
 				}
 			}
 		}
