@@ -23,7 +23,7 @@
 
 #include <array>
 
-#define CORRECTION_ON
+//#define CORRECTION_ON
 //#define CORRECTION_OPTIMIZE
 
 using real = double;
@@ -31,7 +31,7 @@ using integer = long long;
 
 constexpr integer NDIM = 3;
 constexpr integer ncrit = 8;
-constexpr integer nparts = 100000;
+constexpr integer nparts = 20000;
 constexpr integer nchild = 8;
 constexpr integer LP = 20;
 
